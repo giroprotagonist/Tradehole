@@ -1,0 +1,103 @@
+{
+  "name": "tradehole",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FRO options monitoring dashboard — market data, E*TRADE sandbox P&L, IRONSIGHT OSINT",
+  "main": "dist-electron/main.js",
+  "author": "Tradehole",
+  "scripts": {
+    "dev": "concurrently -k -n server,vite,electron -c blue,green,magenta \"npm run dev:server\" \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on http://127.0.0.1:3169/api/health http://127.0.0.1:5173 && tsc -p electron/tsconfig.json && electron .",
+    "build": "npm run build:server && npm run build:electron && vite build",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist-server/index.js --packages=bundle",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "dist:mac": "npm run build && electron-builder --mac dir --publish never",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "install:mac": "npm run dist:mac && node scripts/install-mac.mjs",
+    "start:server": "tsx server/index.ts",
+    "osint": "node scripts/run-ironsight.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "oauth": "^0.10.2",
+    "yahoo-finance2": "^3.13.0",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.30",
+    "@types/oauth": "^0.9.6",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^4.5.2",
+    "concurrently": "^9.1.2",
+    "electron": "^35.4.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.12",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.tradehole.app",
+    "productName": "Tradehole",
+    "copyright": "Copyright © 2026",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-server",
+        "to": "api"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.finance",
+      "target": [
+        "dir"
+      ],
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Tradehole"
+    }
+  }
+}

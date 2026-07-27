@@ -1,0 +1,14 @@
+release/
+dist/
+dist-electron/
+dist-server/
+node_modules/
+.env
+.env.local
+*.log
+.DS_Store
+.etrade-tokens.json
+IRONSIGHT/
+*.pem
+.vscode/
+.idea/

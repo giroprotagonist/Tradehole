@@ -1,0 +1,86 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  windows:
+    needs: typecheck
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Build Windows installer + portable
+        run: npm run dist:win
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradehole-windows-x64
+          path: |
+            release/*.exe
+            release/**/*.exe
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  macos:
+    needs: typecheck
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Build macOS app (dir)
+        run: npm run dist:mac
+      - name: Zip Tradehole.app
+        run: |
+          ARCH_DIR=$(ls -d release/mac* | head -1)
+          ditto -c -k --sequesterRsrc --keepParent "$ARCH_DIR/Tradehole.app" "release/Tradehole-mac.zip"
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradehole-macos
+          path: release/Tradehole-mac.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Attach mac zip to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/Tradehole-mac.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
