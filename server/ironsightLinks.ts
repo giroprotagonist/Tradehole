@@ -1,3 +1,11 @@
+export type IronsightConflictKey = "iran-israel" | "russia-ukraine";
+
+/** Both theaters IRONSIGHT supports today. */
+export const IRONSIGHT_CONFLICTS: IronsightConflictKey[] = [
+  "iran-israel",
+  "russia-ukraine",
+];
+
 export type IronsightLinkItem = {
   title: string;
   link: string;
@@ -5,6 +13,7 @@ export type IronsightLinkItem = {
   pubDate?: string;
   category?: string;
   panel: "news" | "telegram" | "strikes" | "regional-alerts";
+  conflict: IronsightConflictKey;
 };
 
 type FetchResult = {
@@ -34,7 +43,7 @@ async function fetchJson(url: string, timeoutMs = 25_000): Promise<unknown> {
   return response.json();
 }
 
-function fromNews(raw: unknown): IronsightLinkItem[] {
+function fromNews(raw: unknown, conflict: IronsightConflictKey): IronsightLinkItem[] {
   const articles = Array.isArray(raw)
     ? raw
     : asArray((raw as { news?: unknown }).news);
@@ -51,12 +60,16 @@ function fromNews(raw: unknown): IronsightLinkItem[] {
       pubDate: row.pubDate != null ? String(row.pubDate) : undefined,
       category: row.category != null ? String(row.category) : undefined,
       panel: "news",
+      conflict,
     });
   }
   return out;
 }
 
-function fromTelegram(raw: unknown): IronsightLinkItem[] {
+function fromTelegram(
+  raw: unknown,
+  conflict: IronsightConflictKey,
+): IronsightLinkItem[] {
   const posts = asArray((raw as { posts?: unknown }).posts);
   const out: IronsightLinkItem[] = [];
   for (const item of posts) {
@@ -75,12 +88,16 @@ function fromTelegram(raw: unknown): IronsightLinkItem[] {
       pubDate: row.date != null ? String(row.date) : undefined,
       category: "telegram",
       panel: "telegram",
+      conflict,
     });
   }
   return out;
 }
 
-function fromStrikes(raw: unknown): IronsightLinkItem[] {
+function fromStrikes(
+  raw: unknown,
+  conflict: IronsightConflictKey,
+): IronsightLinkItem[] {
   const out: IronsightLinkItem[] = [];
   for (const item of asArray(raw)) {
     const row = item as Record<string, unknown>;
@@ -94,12 +111,16 @@ function fromStrikes(raw: unknown): IronsightLinkItem[] {
       pubDate: row.date != null ? String(row.date) : undefined,
       category: row.category != null ? String(row.category) : "strike",
       panel: "strikes",
+      conflict,
     });
   }
   return out;
 }
 
-function fromRegional(raw: unknown): IronsightLinkItem[] {
+function fromRegional(
+  raw: unknown,
+  conflict: IronsightConflictKey,
+): IronsightLinkItem[] {
   const countries = asArray(
     (raw as { alerts?: unknown; countries?: unknown }).alerts ??
       (raw as { countries?: unknown }).countries,
@@ -120,6 +141,7 @@ function fromRegional(raw: unknown): IronsightLinkItem[] {
         pubDate: row.time != null ? String(row.time) : undefined,
         category: `${countryName}:${String(row.severity ?? "event")}`,
         panel: "regional-alerts",
+        conflict,
       });
     }
   }
@@ -139,61 +161,140 @@ async function safeFetch(
   }
 }
 
-/**
- * Collect every clickable URL shown in IRONSIGHT panels that render links:
- * Live Intel (news), Telegram, Strikes, Regional Alerts.
- */
-export async function collectIronsightLinks(
-  ironsightUrl: string,
-  conflict = "iran-israel",
-): Promise<{
+export type IronsightLinksPayload = {
   generatedAt: string;
   conflict: string;
+  conflicts: IronsightConflictKey[];
   sourceBase: string;
   count: number;
   links: string[];
   articles: IronsightLinkItem[];
   byPanel: Record<string, number>;
-  panelStatus: Array<{ panel: string; ok: boolean; count: number; error?: string }>;
-}> {
+  byConflict: Record<string, number>;
+  panelStatus: Array<{
+    conflict: string;
+    panel: string;
+    ok: boolean;
+    count: number;
+    error?: string;
+  }>;
+};
+
+/**
+ * Collect every clickable URL for one IRONSIGHT theater.
+ */
+export async function collectIronsightLinks(
+  ironsightUrl: string,
+  conflict: IronsightConflictKey = "iran-israel",
+): Promise<IronsightLinksPayload> {
   const base = ironsightUrl.replace(/\/$/, "");
   const q = `conflict=${encodeURIComponent(conflict)}`;
 
   const results = await Promise.all([
-    safeFetch("news", `${base}/api/news?${q}`, fromNews),
-    safeFetch("telegram", `${base}/api/telegram?${q}`, fromTelegram),
-    safeFetch("strikes", `${base}/api/strikes?${q}`, fromStrikes),
-    safeFetch("regional-alerts", `${base}/api/regional-alerts?${q}`, fromRegional),
+    safeFetch("news", `${base}/api/news?${q}`, (raw) => fromNews(raw, conflict)),
+    safeFetch("telegram", `${base}/api/telegram?${q}`, (raw) =>
+      fromTelegram(raw, conflict),
+    ),
+    safeFetch("strikes", `${base}/api/strikes?${q}`, (raw) =>
+      fromStrikes(raw, conflict),
+    ),
+    safeFetch("regional-alerts", `${base}/api/regional-alerts?${q}`, (raw) =>
+      fromRegional(raw, conflict),
+    ),
   ]);
 
   const seen = new Set<string>();
   const articles: IronsightLinkItem[] = [];
   for (const result of results) {
     for (const item of result.items) {
-      if (seen.has(item.link)) continue;
-      seen.add(item.link);
+      const key = `${item.conflict}|${item.link}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       articles.push(item);
     }
   }
 
   const byPanel: Record<string, number> = {};
+  const byConflict: Record<string, number> = {};
   for (const item of articles) {
     byPanel[item.panel] = (byPanel[item.panel] ?? 0) + 1;
+    byConflict[item.conflict] = (byConflict[item.conflict] ?? 0) + 1;
   }
 
   return {
     generatedAt: new Date().toISOString(),
     conflict,
+    conflicts: [conflict],
     sourceBase: base,
     count: articles.length,
     links: articles.map((a) => a.link),
     articles,
     byPanel,
+    byConflict,
     panelStatus: results.map((r) => ({
+      conflict,
       panel: r.panel,
       ok: r.ok,
       count: r.items.length,
       error: r.error,
     })),
   };
+}
+
+/**
+ * Collect links for every IRONSIGHT theater (iran-israel + russia-ukraine).
+ */
+export async function collectAllIronsightLinks(
+  ironsightUrl: string,
+  conflicts: IronsightConflictKey[] = IRONSIGHT_CONFLICTS,
+): Promise<IronsightLinksPayload> {
+  const parts = await Promise.all(
+    conflicts.map((c) => collectIronsightLinks(ironsightUrl, c)),
+  );
+
+  const seen = new Set<string>();
+  const articles: IronsightLinkItem[] = [];
+  const panelStatus: IronsightLinksPayload["panelStatus"] = [];
+  for (const part of parts) {
+    panelStatus.push(...part.panelStatus);
+    for (const item of part.articles) {
+      const key = `${item.conflict}|${item.link}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      articles.push(item);
+    }
+  }
+
+  const byPanel: Record<string, number> = {};
+  const byConflict: Record<string, number> = {};
+  for (const item of articles) {
+    byPanel[item.panel] = (byPanel[item.panel] ?? 0) + 1;
+    byConflict[item.conflict] = (byConflict[item.conflict] ?? 0) + 1;
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    conflict: "all",
+    conflicts,
+    sourceBase: ironsightUrl.replace(/\/$/, ""),
+    count: articles.length,
+    links: [...new Set(articles.map((a) => a.link))],
+    articles,
+    byPanel,
+    byConflict,
+    panelStatus,
+  };
+}
+
+export function resolveIronsightConflicts(
+  raw: string | undefined,
+): IronsightConflictKey[] | "all" {
+  const v = (raw ?? "all").trim().toLowerCase();
+  if (!v || v === "all" || v === "both") return "all";
+  if (v === "iran-israel" || v === "russia-ukraine") {
+    return [v];
+  }
+  throw new Error(
+    `Unknown conflict "${raw}". Use all | iran-israel | russia-ukraine`,
+  );
 }

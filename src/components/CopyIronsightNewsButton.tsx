@@ -1,14 +1,6 @@
 import { useState } from "react";
 import { getApiBase } from "../services/api";
 
-type NewsItem = {
-  title: string;
-  link: string;
-  source?: string;
-  pubDate?: string;
-  category?: string;
-};
-
 type Props = {
   /** Show on IRONSIGHT tab primarily */
   compact?: boolean;
@@ -20,16 +12,19 @@ export function CopyIronsightNewsButton({ compact }: Props) {
 
   async function handleCopy() {
     setBusy(true);
-    setStatus("Fetching IRONSIGHT news…");
+    setStatus("Fetching both theaters…");
     try {
       const base = await getApiBase();
-      const res = await fetch(`${base}/api/ironsight/news-blast`);
+      // Default: both iran-israel + russia-ukraine
+      const res = await fetch(`${base}/api/ironsight/news-blast?conflict=all`);
       const data = (await res.json()) as {
         error?: string;
         count?: number;
         links?: string[];
-        articles?: NewsItem[];
+        articles?: unknown[];
         byPanel?: Record<string, number>;
+        byConflict?: Record<string, number>;
+        conflicts?: string[];
         json?: string;
         generatedAt?: string;
       };
@@ -40,7 +35,10 @@ export function CopyIronsightNewsButton({ compact }: Props) {
         JSON.stringify(
           {
             generatedAt: data.generatedAt,
+            conflicts: data.conflicts,
             count: data.count,
+            byConflict: data.byConflict,
+            byPanel: data.byPanel,
             links: data.links,
             articles: data.articles,
           },
@@ -49,22 +47,18 @@ export function CopyIronsightNewsButton({ compact }: Props) {
         );
 
       await navigator.clipboard.writeText(payload);
-      const byPanel =
-        data.byPanel && typeof data.byPanel === "object"
-          ? Object.entries(data.byPanel as Record<string, number>)
+      const theaters =
+        data.byConflict && typeof data.byConflict === "object"
+          ? Object.entries(data.byConflict)
               .map(([k, v]) => `${k}:${v}`)
               .join(" · ")
-          : null;
-      setStatus(
-        byPanel
-          ? `Copied ${data.count ?? 0} links (${byPanel})`
-          : `Copied ${data.count ?? 0} links as JSON`,
-      );
+          : (data.conflicts ?? []).join(" + ");
+      setStatus(`Copied ${data.count ?? 0} links (${theaters})`);
     } catch (err) {
       setStatus(`Failed: ${String(err)}`);
     } finally {
       setBusy(false);
-      window.setTimeout(() => setStatus(null), 8000);
+      window.setTimeout(() => setStatus(null), 10_000);
     }
   }
 
@@ -75,7 +69,7 @@ export function CopyIronsightNewsButton({ compact }: Props) {
         className={compact ? "ghost" : "primary"}
         disabled={busy}
         onClick={() => void handleCopy()}
-        title="Copy all clickable IRONSIGHT links (news, telegram, strikes, regional alerts)"
+        title="Copy clickable links from both IRONSIGHT theaters (Iran–Israel + Russia–Ukraine)"
       >
         {busy ? "Fetching links…" : "Copy IRONSIGHT links JSON"}
       </button>

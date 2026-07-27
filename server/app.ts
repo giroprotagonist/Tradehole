@@ -20,7 +20,11 @@ import { getVolatilityReport } from "./volatility";
 import { buildLlmDossier } from "./dossier";
 import { getPhysicalMarkets } from "./physical";
 import { buildDecisionIntel } from "./intel";
-import { collectIronsightLinks } from "./ironsightLinks";
+import {
+  collectAllIronsightLinks,
+  collectIronsightLinks,
+  resolveIronsightConflicts,
+} from "./ironsightLinks";
 import {
   getTradingStatus,
   placeOptionOrder,
@@ -345,11 +349,19 @@ export function createApp(): Express {
 
   app.get("/api/ironsight/news-blast", async (req, res) => {
     try {
-      const conflict =
-        typeof req.query.conflict === "string" && req.query.conflict.trim()
-          ? req.query.conflict.trim()
-          : "iran-israel";
-      const payload = await collectIronsightLinks(ironsightUrl, conflict);
+      const raw =
+        typeof req.query.conflict === "string" ? req.query.conflict : "all";
+      let payload;
+      try {
+        const resolved = resolveIronsightConflicts(raw);
+        payload =
+          resolved === "all"
+            ? await collectAllIronsightLinks(ironsightUrl)
+            : await collectIronsightLinks(ironsightUrl, resolved[0]);
+      } catch (err) {
+        res.status(400).json({ error: String(err) });
+        return;
+      }
       const anyOk = payload.panelStatus.some((p) => p.ok);
       if (!anyOk) {
         res.status(502).json({
