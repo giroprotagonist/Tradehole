@@ -1,5 +1,12 @@
 import crypto from "node:crypto";
-import { apiPost, getPortfolio, type EtradeAccount, listAccounts } from "./etrade";
+import {
+  apiPost,
+  apiPut,
+  getPortfolio,
+  type EtradeAccount,
+  listAccounts,
+  resolveAccountIdKey,
+} from "./etrade";
 
 /** Focus trade: FRO Sep 18 '26 $46 call — matches dashboard position focus. */
 export const FRO_TRADE_DEFAULTS = {
@@ -225,10 +232,40 @@ function asArray<T>(v: T | T[] | undefined | null): T[] {
   return Array.isArray(v) ? v : [v];
 }
 
+function etradeErrorMessage(resp: Record<string, unknown>): string | null {
+  const err = resp.Error ?? resp.ErrorResponse ?? resp.error;
+  if (!err) return null;
+  if (typeof err === "string") return err;
+  if (Array.isArray(err)) {
+    return err
+      .map((e) => {
+        const row = e as Record<string, unknown>;
+        return String(row.message ?? row.description ?? row.code ?? JSON.stringify(e));
+      })
+      .join("; ");
+  }
+  if (typeof err === "object") {
+    const row = err as Record<string, unknown>;
+    const code = row.code != null ? `code ${row.code}` : null;
+    const msg = row.message != null ? String(row.message) : null;
+    const desc = row.description != null ? String(row.description) : null;
+    return [code, msg ?? desc].filter(Boolean).join(": ") || JSON.stringify(err);
+  }
+  return String(err);
+}
+
 function extractPreviewId(resp: Record<string, unknown>): string {
-  const preview = resp.PreviewOrderResponse as Record<string, unknown> | undefined;
+  const preview =
+    (resp.PreviewOrderResponse as Record<string, unknown> | undefined) ??
+    (resp.previewOrderResponse as Record<string, unknown> | undefined);
   if (!preview) {
-    throw new Error("Missing PreviewOrderResponse in E*TRADE reply");
+    const etradeErr = etradeErrorMessage(resp);
+    const keys = Object.keys(resp).join(", ") || "(empty)";
+    throw new Error(
+      etradeErr
+        ? `E*TRADE preview rejected: ${etradeErr}`
+        : `Missing PreviewOrderResponse in E*TRADE reply (keys: ${keys}). Often means not enough free contracts — cancel open sells first.`,
+    );
   }
   const ids = preview.PreviewIds as
     | { previewId?: string | number }
@@ -237,7 +274,12 @@ function extractPreviewId(resp: Record<string, unknown>): string {
   const first = asArray(ids)[0] ?? (ids as { previewId?: string | number });
   const id = first?.previewId;
   if (id == null || id === "") {
-    throw new Error("No previewId returned — order may have been rejected");
+    const etradeErr = etradeErrorMessage(resp);
+    throw new Error(
+      etradeErr
+        ? `E*TRADE preview rejected: ${etradeErr}`
+        : "No previewId returned — order may have been rejected",
+    );
   }
   return String(id);
 }
@@ -279,12 +321,7 @@ function confirmPhrase(order: OrderStrings): string {
 }
 
 async function resolveAccountKey(accountIdKey?: string): Promise<string> {
-  if (accountIdKey) return accountIdKey;
-  const accounts = await listAccounts();
-  if (!accounts.length) {
-    throw new Error("No E*TRADE accounts found");
-  }
-  return accounts[0].accountIdKey;
+  return resolveAccountIdKey(accountIdKey);
 }
 
 function purgeExpired(): void {
@@ -433,6 +470,78 @@ export async function placeOptionOrder(
         : null,
     summary: stored.summary,
     accountIdKey: stored.accountIdKey,
+    raw: resp,
+  };
+}
+
+export type CancelOrderResult = {
+  ok: true;
+  orderId: string;
+  cancelTime: string | null;
+  accountId: string | null;
+  confirmPhrase: string;
+  messages: Array<{ type: string; code: number | null; description: string }>;
+  raw: Record<string, unknown>;
+};
+
+export function cancelConfirmPhrase(orderId: string | number): string {
+  return `CANCEL ORDER ${orderId}`;
+}
+
+export async function cancelOrder(opts: {
+  accountIdKey?: string;
+  orderId: string | number;
+  confirm: string;
+}): Promise<CancelOrderResult> {
+  requireTrading();
+  const orderId = String(opts.orderId).trim();
+  if (!orderId) throw new Error("orderId required");
+  const phrase = cancelConfirmPhrase(orderId);
+  if (opts.confirm.trim() !== phrase) {
+    throw new Error(`Confirmation phrase must exactly match: ${phrase}`);
+  }
+
+  const accountIdKey = await resolveAccountKey(opts.accountIdKey);
+  const payload = {
+    CancelOrderRequest: {
+      orderId: Number(orderId),
+    },
+  };
+
+  const resp = await apiPut<Record<string, unknown>>(
+    `/v1/accounts/${encodeURIComponent(accountIdKey)}/orders/cancel`,
+    payload,
+  );
+
+  const body = (resp.CancelOrderResponse ?? resp) as Record<string, unknown>;
+  const messagesRoot = body.Messages ?? body.messages;
+  const messages = asArray(
+    (messagesRoot as { Message?: unknown } | undefined)?.Message ??
+      (messagesRoot as { message?: unknown } | undefined)?.message,
+  ).map((m) => {
+    const row = m as Record<string, unknown>;
+    return {
+      type: String(row.type ?? "INFO"),
+      code: typeof row.code === "number" ? row.code : null,
+      description: String(row.description ?? ""),
+    };
+  });
+
+  const cancelTimeRaw = body.cancelTime;
+  const cancelTime =
+    typeof cancelTimeRaw === "number"
+      ? new Date(cancelTimeRaw).toISOString()
+      : cancelTimeRaw != null
+        ? String(cancelTimeRaw)
+        : null;
+
+  return {
+    ok: true,
+    orderId: body.orderId != null ? String(body.orderId) : orderId,
+    cancelTime,
+    accountId: body.accountId != null ? String(body.accountId) : null,
+    confirmPhrase: phrase,
+    messages,
     raw: resp,
   };
 }

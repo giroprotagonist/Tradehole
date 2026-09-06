@@ -42,8 +42,13 @@ export type CmeProductCode = keyof typeof CME_PRODUCT;
 
 /** Keep TTL ≥ Markets Yahoo poll (45s) so we at most 1 CME hit per product per poll window. */
 const CACHE_TTL_MS = 60_000;
-/** Back off longer after hard blocks / errors. */
+/** Soft errors (timeouts / empty) — retry soon. */
 const ERROR_BACKOFF_MS = 5 * 60_000;
+/**
+ * CME IP blocks (“suspected web scraping”) deepen if we retry every few minutes.
+ * Back off hard so Yahoo fallback stays quiet until Globex / a new session.
+ */
+const BLOCK_BACKOFF_MS = 6 * 60 * 60_000;
 
 type CacheEntry = {
   at: number;
@@ -205,6 +210,19 @@ async function fetchCmeProductQuotes(
   return JSON.parse(text) as CmeQuotesResponse;
 }
 
+function backoffMsForError(error: string | undefined): number {
+  if (!error) return ERROR_BACKOFF_MS;
+  if (/\b403\b|blocked|scraping/i.test(error)) return BLOCK_BACKOFF_MS;
+  return ERROR_BACKOFF_MS;
+}
+
+/** Last CME miss reason per product (for Yahoo fallback annotations). */
+const lastMiss = new Map<CmeProductCode, string>();
+
+export function getCmeLastMissReason(product: CmeProductCode): string | null {
+  return lastMiss.get(product) ?? null;
+}
+
 /**
  * Front-month delayed quote for a CME futures product.
  * Cached; returns null on failure (caller should Yahoo-fallback).
@@ -218,36 +236,50 @@ export async function getCmeFrontMonthQuote(
   const hit = cache.get(productId);
   if (hit) {
     const age = now - hit.at;
-    const ttl = hit.quote ? CACHE_TTL_MS : ERROR_BACKOFF_MS;
-    if (age < ttl) return hit.quote;
+    const ttl = hit.quote ? CACHE_TTL_MS : backoffMsForError(hit.error);
+    if (age < ttl) {
+      if (!hit.quote && hit.error) lastMiss.set(product, hit.error);
+      return hit.quote;
+    }
   }
 
   return singleFlightQuote(productId, async () => {
     const again = cache.get(productId);
     if (again) {
       const age = Date.now() - again.at;
-      const ttl = again.quote ? CACHE_TTL_MS : ERROR_BACKOFF_MS;
-      if (age < ttl) return again.quote;
+      const ttl = again.quote ? CACHE_TTL_MS : backoffMsForError(again.error);
+      if (age < ttl) {
+        if (!again.quote && again.error) lastMiss.set(product, again.error);
+        return again.quote;
+      }
     }
     try {
       const body = await fetchCmeProductQuotes(productId);
       const front = pickFrontMonth(body.quotes ?? []);
       if (!front) {
+        const error = "empty quotes";
+        lastMiss.set(product, error);
         cache.set(productId, {
           at: Date.now(),
           quote: null,
-          error: "empty quotes",
+          error,
         });
         return null;
       }
       const delayNote =
         body.quoteDelay != null ? String(body.quoteDelay) : null;
       const quote = mapCmeQuote(front, yahooSymbol, delayNote);
+      lastMiss.delete(product);
       cache.set(productId, { at: Date.now(), quote });
       return quote;
     } catch (err) {
       const msg = String(err);
-      console.warn(`[tradehole] CME quote failed for ${product}:`, msg);
+      lastMiss.set(product, msg);
+      const blocked = /\b403\b|blocked|scraping/i.test(msg);
+      console.warn(
+        `[tradehole] CME quote failed for ${product}${blocked ? " (IP blocked — Yahoo fallback, long backoff)" : ""}:`,
+        msg.slice(0, 220),
+      );
       cache.set(productId, {
         at: Date.now(),
         quote: null,
@@ -258,7 +290,7 @@ export async function getCmeFrontMonthQuote(
   });
 }
 
-/** Prefer CME; on miss/error return Yahoo result. */
+/** Prefer CME; on miss/error return Yahoo result (annotated when CME blocked/down). */
 export async function preferCmeThenYahoo(
   product: CmeProductCode,
   yahooSymbol: string,
@@ -266,12 +298,29 @@ export async function preferCmeThenYahoo(
 ): Promise<StockQuote> {
   const cme = await getCmeFrontMonthQuote(product, yahooSymbol);
   if (cme?.price != null) return cme;
-  return yahooFetch();
+  const yahoo = await yahooFetch();
+  const miss = lastMiss.get(product);
+  const blocked = miss != null && /\b403\b|blocked|scraping/i.test(miss);
+  const frozen =
+    yahoo.price != null &&
+    yahoo.previousClose != null &&
+    Math.abs(yahoo.price - yahoo.previousClose) < 1e-9;
+  let note = "yahoo-finance2";
+  if (blocked) note += " · CME blocked";
+  else if (miss) note += " · CME miss";
+  if (frozen) note += " · stale settle (last=prevClose)";
+  if (note !== yahoo.source) {
+    console.warn(
+      `[tradehole] ${product} energy falling back to Yahoo (${note}) @ ${yahoo.price}`,
+    );
+  }
+  return { ...yahoo, source: note };
 }
 
 /** Test helpers */
 export function _resetCmeQuoteCacheForTests(): void {
   cache.clear();
+  lastMiss.clear();
 }
 
 export function _parseCmeNumberForTests(raw: unknown): number | null {

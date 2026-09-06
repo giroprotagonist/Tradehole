@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { isRobinhoodAccountKey } from "../lib/accounts";
 import { fmtMoney } from "../lib/format";
 import {
   fetchTradingStatus,
@@ -11,6 +12,7 @@ import type {
   OrderPreview,
   OrderPlaceResult,
   Portfolio,
+  TradeOrderDraft,
   TradingStatus,
 } from "../types";
 
@@ -23,15 +25,21 @@ type OrderTerm = "GOOD_FOR_DAY" | "GOOD_UNTIL_CANCEL";
 type Props = {
   status: EtradeStatus | null;
   portfolio: Portfolio | null;
+  tradingAccountIdKey?: string | null;
   focusCall: OptionContract | null;
   onPlaced?: () => void;
+  draft?: TradeOrderDraft | null;
+  onDraftConsumed?: () => void;
 };
 
 export function TradeOrderPanel({
   status,
   portfolio,
+  tradingAccountIdKey,
   focusCall,
   onPlaced,
+  draft,
+  onDraftConsumed,
 }: Props) {
   const [trading, setTrading] = useState<TradingStatus | null>(null);
   const [quantity, setQuantity] = useState(1);
@@ -47,9 +55,25 @@ export function TradeOrderPanel({
   const [placed, setPlaced] = useState<OrderPlaceResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draftNote, setDraftNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!draft) return;
+    setOrderAction(draft.orderAction);
+    setQuantity(Math.max(1, draft.quantity));
+    if (draft.limitPrice) setLimitPrice(draft.limitPrice);
+    setPriceType("LIMIT");
+    setOrderTerm("GOOD_FOR_DAY");
+    setPreview(null);
+    setConfirm("");
+    setDraftNote(`Playbook ${draft.proposalId.slice(0, 8)}… applied — preview still required`);
+    onDraftConsumed?.();
+  }, [draft, onDraftConsumed]);
 
   const authorized = status?.authorized;
   const isProduction = status?.env === "production";
+  const rhSelected = isRobinhoodAccountKey(portfolio?.accountIdKey);
+  const ordersAccountKey = tradingAccountIdKey ?? portfolio?.accountIdKey;
 
   useEffect(() => {
     void fetchTradingStatus()
@@ -78,10 +102,9 @@ export function TradeOrderPanel({
 
   const heldQty = useMemo(() => {
     if (!portfolio) return 0;
-    const row = portfolio.positions.find((p) =>
-      /FRO.*46.*Call/i.test(p.symbolDescription),
-    );
-    return row?.quantity ?? 0;
+    return portfolio.positions
+      .filter((p) => /FRO.*46.*Call/i.test(p.symbolDescription))
+      .reduce((sum, p) => sum + (p.quantity ?? 0), 0);
   }, [portfolio]);
 
   const refPremium =
@@ -109,7 +132,7 @@ export function TradeOrderPanel({
     setConfirm("");
     try {
       const result = await previewEtradeOrder({
-        accountIdKey: portfolio?.accountIdKey,
+        accountIdKey: ordersAccountKey,
         symbol: "FRO",
         callPut: "CALL",
         expiry: FRO_EXPIRY,
@@ -148,7 +171,7 @@ export function TradeOrderPanel({
     }
   }
 
-  if (!authorized) return null;
+  if (!authorized || rhSelected) return null;
 
   return (
     <section className="panel trade-panel">
@@ -175,6 +198,8 @@ export function TradeOrderPanel({
           regular hours (after-hours trails can mis-price).
         </p>
       )}
+
+      {draftNote && <p className="banner info">{draftNote}</p>}
 
       <div className="trade-form">
         <label>

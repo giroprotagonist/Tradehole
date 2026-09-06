@@ -1,5 +1,6 @@
 import type { VolatilityReport } from "../types";
 import { fmtMoney, signedClass } from "../lib/format";
+import { FlashValue } from "./FlashValue";
 
 type Props = {
   report: VolatilityReport | null;
@@ -123,27 +124,35 @@ export function VolatilityPanel({ report, loading }: Props) {
       <div className="vol-hero">
         <div>
           <dt>ATM IV</dt>
-          <dd>{pctIv(report.atmIv)}</dd>
+          <dd>
+            <FlashValue value={report.atmIv}>{pctIv(report.atmIv)}</FlashValue>
+          </dd>
         </div>
         <div>
           <dt>HV 20</dt>
-          <dd>{pctIv(report.hv20)}</dd>
+          <dd>
+            <FlashValue value={report.hv20}>{pctIv(report.hv20)}</FlashValue>
+          </dd>
         </div>
         <div>
           <dt>IV − HV</dt>
           <dd className={signedClass(report.ivMinusHv20)}>
-            {report.ivMinusHv20 == null
-              ? "—"
-              : `${report.ivMinusHv20 > 0 ? "+" : ""}${(report.ivMinusHv20 * 100).toFixed(1)} pts`}
+            <FlashValue value={report.ivMinusHv20}>
+              {report.ivMinusHv20 == null
+                ? "—"
+                : `${report.ivMinusHv20 > 0 ? "+" : ""}${(report.ivMinusHv20 * 100).toFixed(1)} pts`}
+            </FlashValue>
           </dd>
           <p className="muted tiny">{rich ? "IV rich vs realized" : "IV cheap vs realized"}</p>
         </div>
         <div>
           <dt>Skew</dt>
           <dd className={signedClass(report.skew)}>
-            {report.skew == null
-              ? "—"
-              : `${report.skew > 0 ? "+" : ""}${(report.skew * 100).toFixed(1)} pts`}
+            <FlashValue value={report.skew}>
+              {report.skew == null
+                ? "—"
+                : `${report.skew > 0 ? "+" : ""}${(report.skew * 100).toFixed(1)} pts`}
+            </FlashValue>
           </dd>
           <p className="muted tiny">{report.skewNote}</p>
         </div>
@@ -177,7 +186,11 @@ export function VolatilityPanel({ report, loading }: Props) {
           <div className="vol-position-grid">
             <div>
               <dt>Contract IV</dt>
-              <dd>{pctIv(report.positionFocus.iv)}</dd>
+              <dd>
+                <FlashValue value={report.positionFocus.iv}>
+                  {pctIv(report.positionFocus.iv)}
+                </FlashValue>
+              </dd>
             </div>
             <div>
               <dt>Expiry</dt>

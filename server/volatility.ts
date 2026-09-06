@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import YahooFinance from "yahoo-finance2";
 import { getOptionsChain, getStockQuote, type OptionContract, type OptionsChain } from "./market";
+import { computeIvRank } from "./analytics/ivRank";
 
 const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
@@ -91,7 +92,14 @@ export function recordAtmIvSnapshot(
   spot: number | null,
 ): IvSnapshot[] {
   const today = new Date().toISOString().slice(0, 10);
-  const existing = readSnapshots(symbol).filter((r) => r.date !== today);
+  // Drop prior junk floors and skip writing a new junk point.
+  const existing = readSnapshots(symbol).filter(
+    (r) => r.date !== today && isPlausibleIv(r.atmIv),
+  );
+  if (!isPlausibleIv(atmIv)) {
+    writeSnapshots(symbol, existing.slice(-750));
+    return existing.slice(-750);
+  }
   const next = [...existing, { date: today, atmIv, spot }].sort((a, b) =>
     a.date.localeCompare(b.date),
   );
@@ -112,6 +120,20 @@ function nearestByStrike(rows: OptionContract[], spot: number): OptionContract |
   );
 }
 
+/** Yahoo floor IVs (~0.00001) when quotes are blank — not usable for ATM / IV Rank. */
+function isPlausibleIv(iv: number): boolean {
+  const pct = iv > 2 ? iv : iv * 100;
+  return Number.isFinite(pct) && pct >= 5 && pct <= 250;
+}
+
+function ivToPct(iv: number): number {
+  return iv > 2 ? iv : iv * 100;
+}
+
+/**
+ * Headline ATM for call-focused packs: average call+put when they agree;
+ * prefer call when put skew would overstate (e.g. call ~51% / put ~79% → ~65%).
+ */
 function atmFromChain(
   chain: OptionsChain,
   spot: number,
@@ -123,10 +145,18 @@ function atmFromChain(
 } {
   const call = nearestByStrike(chain.calls, spot);
   const put = nearestByStrike(chain.puts, spot);
-  const atmCallIv = call?.impliedVolatility ?? null;
-  const atmPutIv = put?.impliedVolatility ?? null;
-  const vals = [atmCallIv, atmPutIv].filter((v): v is number => v != null && v > 0);
-  const atmIv = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  const rawCall = call?.impliedVolatility ?? null;
+  const rawPut = put?.impliedVolatility ?? null;
+  const atmCallIv =
+    rawCall != null && isPlausibleIv(rawCall) ? rawCall : null;
+  const atmPutIv = rawPut != null && isPlausibleIv(rawPut) ? rawPut : null;
+  let atmIv: number | null = null;
+  if (atmCallIv != null && atmPutIv != null) {
+    const skewPts = Math.abs(ivToPct(atmCallIv) - ivToPct(atmPutIv));
+    atmIv = skewPts >= 15 ? atmCallIv : (atmCallIv + atmPutIv) / 2;
+  } else {
+    atmIv = atmCallIv ?? atmPutIv;
+  }
   const atmStrike = call?.strike ?? put?.strike ?? null;
   return { atmIv, atmCallIv, atmPutIv, atmStrike };
 }
@@ -326,10 +356,22 @@ export async function getVolatilityReport(
   if (atm.atmIv != null && atm.atmIv > 0) {
     snapshots = recordAtmIvSnapshot(symbol, atm.atmIv, spot);
   }
-  const { ivRank, ivPercentile } =
+  // Prefer richer local ATM history (SQLite + JSON) for IV rank when available.
+  let { ivRank, ivPercentile } =
     atm.atmIv != null
       ? ivRankAndPercentile(snapshots, atm.atmIv)
       : { ivRank: null, ivPercentile: null };
+  let snapshotCount = snapshots.length;
+  try {
+    const richer = await computeIvRank(symbol);
+    if (richer.sampleDays >= snapshotCount && richer.ivRank != null) {
+      ivRank = richer.ivRank;
+      ivPercentile = richer.ivPercentile;
+      snapshotCount = richer.sampleDays;
+    }
+  } catch {
+    /* keep JSON-only rank */
+  }
 
   const positionFocus = findPositionContract(
     positionChain,
@@ -359,12 +401,14 @@ export async function getVolatilityReport(
       atm.atmIv != null && hv20 != null ? atm.atmIv - hv20 : null,
     ivRank,
     ivPercentile,
-    snapshotCount: snapshots.length,
-    snapshotDays: snapshots.length
-      ? daysBetween(
-          new Date(`${snapshots[0].date}T00:00:00Z`),
-          new Date(`${snapshots[snapshots.length - 1].date}T00:00:00Z`),
-        ) + 1
+    snapshotCount,
+    snapshotDays: snapshotCount
+      ? snapshots.length
+        ? daysBetween(
+            new Date(`${snapshots[0].date}T00:00:00Z`),
+            new Date(`${snapshots[snapshots.length - 1].date}T00:00:00Z`),
+          ) + 1
+        : snapshotCount
       : 0,
     positionFocus,
     termStructure,

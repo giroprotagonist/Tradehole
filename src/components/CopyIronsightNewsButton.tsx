@@ -1,17 +1,20 @@
 import { useState } from "react";
-import { getApiBase } from "../services/api";
+import { copyText } from "../lib/clipboard";
+import { downloadNewsPack, getApiBase } from "../services/api";
 
 type Props = {
   /** Show on IRONSIGHT tab primarily */
   compact?: boolean;
 };
 
+type Busy = "links" | "pack" | null;
+
 export function CopyIronsightNewsButton({ compact }: Props) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<Busy>(null);
   const [status, setStatus] = useState<string | null>(null);
 
   async function handleCopy() {
-    setBusy(true);
+    setBusy("links");
     setStatus("Fetching both theaters…");
     try {
       const base = await getApiBase();
@@ -46,7 +49,7 @@ export function CopyIronsightNewsButton({ compact }: Props) {
           2,
         );
 
-      await navigator.clipboard.writeText(payload);
+      await copyText(payload);
       const theaters =
         data.byConflict && typeof data.byConflict === "object"
           ? Object.entries(data.byConflict)
@@ -57,8 +60,30 @@ export function CopyIronsightNewsButton({ compact }: Props) {
     } catch (err) {
       setStatus(`Failed: ${String(err)}`);
     } finally {
-      setBusy(false);
+      setBusy(null);
       window.setTimeout(() => setStatus(null), 10_000);
+    }
+  }
+
+  async function handleNewsPack() {
+    setBusy("pack");
+    setStatus(
+      "Building news pack (RSS + article bodies + ROBUST Telegram dump — may take a few min)…",
+    );
+    try {
+      const stats = await downloadNewsPack({
+        conflict: "all",
+        fetchLimit: 100,
+        telegram: "robust",
+      });
+      setStatus(
+        `Downloaded news pack · ${stats.articles} articles · tg=${stats.telegram} (${stats.telegramMode}) · bodies ok=${stats.fetchedOk} fail=${stats.fetchedFail}`,
+      );
+    } catch (err) {
+      setStatus(`Failed: ${String(err)}`);
+    } finally {
+      setBusy(null);
+      window.setTimeout(() => setStatus(null), 14_000);
     }
   }
 
@@ -67,11 +92,20 @@ export function CopyIronsightNewsButton({ compact }: Props) {
       <button
         type="button"
         className={compact ? "ghost" : "primary"}
-        disabled={busy}
+        disabled={busy != null}
         onClick={() => void handleCopy()}
         title="Copy clickable links from both IRONSIGHT theaters (Iran–Israel + Russia–Ukraine)"
       >
-        {busy ? "Fetching links…" : "Copy IRONSIGHT links JSON"}
+        {busy === "links" ? "Fetching…" : "Copy links"}
+      </button>
+      <button
+        type="button"
+        className="ghost"
+        disabled={busy != null}
+        onClick={() => void handleNewsPack()}
+        title="Download ZIP: IRONSIGHT news (RSS + body fetch) + ROBUST Telegram dump (full toolkit 30d/500/40 + broad + RU). May take a few minutes."
+      >
+        {busy === "pack" ? "Packing…" : "News pack"}
       </button>
       {status && <span className="dossier-status">{status}</span>}
     </div>

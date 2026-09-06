@@ -1,0 +1,24 @@
+{
+  "book": "lottery",
+  "focus": {
+    "symbol": "FRO",
+    "expiry": "2026-09-18",
+    "strike": 46,
+    "callPut": "call"
+  },
+  "gates": {
+    "maxSpreadPct": 25,
+    "maxWidth": 0.3,
+    "maxAddQty": 1,
+    "maxTrimQty": 2,
+    "maxDebitPerDay": 150,
+    "rthOnlyForAdd": true
+  },
+  "thresholds": {
+    "lotteryHoldEdgePp": 15,
+    "lotteryTrimEdgePp": -8,
+    "feeFreeTrimEdgePp": 20,
+    "dfHoldBands": ["execution_prep", "imminent"]
+  },
+  "notes": "Phase-1 lottery/insurance book only. Scalp book deferred until ≥30 journaled lottery decisions."
+}

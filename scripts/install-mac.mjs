@@ -45,6 +45,39 @@ if (fs.existsSync(envSrc)) {
   console.warn(`No .env found at ${envSrc}; add keys to ${envDest}`);
 }
 
+// Packaged .app cwd is not the repo — rewrite relative IRONSIGHT_PATH to absolute
+const siblingIronsight = path.resolve(root, "../IRONSIGHT");
+if (fs.existsSync(path.join(siblingIronsight, "package.json")) && fs.existsSync(envDest)) {
+  let envText = fs.readFileSync(envDest, "utf8");
+  const absLine = `IRONSIGHT_PATH=${siblingIronsight}`;
+  if (/^IRONSIGHT_PATH=/m.test(envText)) {
+    envText = envText.replace(/^IRONSIGHT_PATH=.*$/m, absLine);
+  } else {
+    envText = `${envText.trimEnd()}\n${absLine}\n`;
+  }
+  fs.writeFileSync(envDest, envText, { mode: 0o600 });
+  console.log(`Set IRONSIGHT_PATH → ${siblingIronsight}`);
+} else if (!fs.existsSync(path.join(siblingIronsight, "package.json"))) {
+  console.warn(
+    `No sibling IRONSIGHT at ${siblingIronsight}. ` +
+      `Set absolute IRONSIGHT_PATH in ${envDest} for OSINT auto-start.`,
+  );
+}
+
+// Packaged API needs absolute TRADEHOLE_ROOT to find news_reader + .venv
+if (fs.existsSync(path.join(root, "news_reader")) && fs.existsSync(envDest)) {
+  let envText = fs.readFileSync(envDest, "utf8");
+  const absRoot = `TRADEHOLE_ROOT=${root}`;
+  if (/^TRADEHOLE_ROOT=/m.test(envText)) {
+    envText = envText.replace(/^TRADEHOLE_ROOT=.*$/m, absRoot);
+  } else {
+    envText = `${envText.trimEnd()}\n${absRoot}\n`;
+  }
+  fs.writeFileSync(envDest, envText, { mode: 0o600 });
+  console.log(`Set TRADEHOLE_ROOT → ${root}`);
+}
+
 console.log("\nInstalled. Open with:");
 console.log("  open -a Tradehole");
 console.log("Or from Applications → Tradehole");
+console.log("IRONSIGHT auto-starts with the app when IRONSIGHT_PATH resolves.");

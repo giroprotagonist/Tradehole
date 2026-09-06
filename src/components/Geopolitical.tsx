@@ -10,23 +10,18 @@ export function Geopolitical({ up, url, mode = "page" }: Props) {
 
   return (
     <section className={isPage ? "ironsight-page" : "panel geo-panel"}>
-      <div className={isPage ? "ironsight-page-head" : "panel-head"}>
-        <div>
-          <p className="eyebrow">OSINT</p>
-          <h2>IRONSIGHT</h2>
-          {!isPage && (
+      {!isPage && (
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">OSINT</p>
+            <h2>IRONSIGHT</h2>
             <p className="muted">Middle East / Red Sea / energy theater</p>
-          )}
-          {isPage && (
-            <p className="muted">
-              Full theater view · Middle East / Red Sea / energy · {url}
-            </p>
-          )}
+          </div>
+          <span className={`pill ${up ? "live" : ""}`}>
+            {up == null ? "checking…" : up ? "online" : "offline"}
+          </span>
         </div>
-        <span className={`pill ${up ? "live" : ""}`}>
-          {up == null ? "checking…" : up ? "online" : "offline"}
-        </span>
-      </div>
+      )}
 
       {up ? (
         <iframe title="IRONSIGHT" src={url} className={isPage ? "ironsight-frame-full" : "ironsight-frame"} />

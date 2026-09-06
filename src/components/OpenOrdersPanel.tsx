@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
+import { isRobinhoodAccountKey } from "../lib/accounts";
 import { fmtMoney } from "../lib/format";
 import { fetchOrders } from "../services/api";
 import type { BrokerOrder, EtradeStatus, Portfolio } from "../types";
 
-const POLL_MS = 30_000;
+const POLL_OPEN_MS = 5_000;
+const POLL_IDLE_MS = 20_000;
 
 type Props = {
   status: EtradeStatus | null;
   portfolio: Portfolio | null;
+  tradingAccountIdKey?: string | null;
   refreshKey?: number;
 };
 
@@ -56,7 +59,12 @@ function qtyLabel(order: BrokerOrder): string {
   return String(ordered);
 }
 
-export function OpenOrdersPanel({ status, portfolio, refreshKey = 0 }: Props) {
+export function OpenOrdersPanel({
+  status,
+  portfolio,
+  tradingAccountIdKey,
+  refreshKey = 0,
+}: Props) {
   const [filter, setFilter] = useState<"OPEN" | "ALL">("OPEN");
   const [orders, setOrders] = useState<BrokerOrder[]>([]);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
@@ -65,16 +73,19 @@ export function OpenOrdersPanel({ status, portfolio, refreshKey = 0 }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const authorized = status?.authorized;
+  const rhSelected = isRobinhoodAccountKey(portfolio?.accountIdKey);
+  const ordersAccountKey = tradingAccountIdKey ?? portfolio?.accountIdKey;
 
   const refresh = useCallback(async () => {
-    if (!authorized) {
+    if (!authorized || rhSelected || !ordersAccountKey) {
       setOrders([]);
+      setError(null);
       return;
     }
     setLoading(true);
     try {
       const data = await fetchOrders({
-        accountIdKey: portfolio?.accountIdKey,
+        accountIdKey: ordersAccountKey,
         status: filter === "OPEN" ? "OPEN" : undefined,
         count: 50,
       });
@@ -86,19 +97,20 @@ export function OpenOrdersPanel({ status, portfolio, refreshKey = 0 }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [authorized, filter, portfolio?.accountIdKey]);
+  }, [authorized, rhSelected, filter, ordersAccountKey]);
 
   useEffect(() => {
     void refresh();
   }, [refresh, refreshKey]);
 
   useEffect(() => {
-    if (!authorized) return;
-    const id = window.setInterval(() => void refresh(), POLL_MS);
+    if (!authorized || rhSelected) return;
+    const ms = filter === "OPEN" ? POLL_OPEN_MS : POLL_IDLE_MS;
+    const id = window.setInterval(() => void refresh(), ms);
     return () => window.clearInterval(id);
-  }, [authorized, refresh]);
+  }, [authorized, rhSelected, refresh, filter]);
 
-  if (!authorized) return null;
+  if (!authorized || rhSelected) return null;
 
   return (
     <section className="panel orders-panel">

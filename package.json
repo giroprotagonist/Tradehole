@@ -1,6 +1,6 @@
 {
   "name": "tradehole",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "description": "FRO options monitoring dashboard — market data, E*TRADE sandbox P&L, IRONSIGHT OSINT",
   "main": "dist-electron/main.js",
@@ -18,19 +18,23 @@
     "install:mac": "npm run dist:mac && node scripts/install-mac.mjs",
     "start:server": "tsx server/index.ts",
     "osint": "node scripts/run-ironsight.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit",
+    "test": "tsx --test server/test/**/*.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "leaflet": "^1.9.4",
     "oauth": "^0.10.2",
+    "react-leaflet": "^5.0.0",
     "yahoo-finance2": "^3.13.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
+    "@types/leaflet": "^1.9.22",
     "@types/node": "^22.15.30",
     "@types/oauth": "^0.9.6",
     "@types/react": "^19.1.6",
@@ -52,8 +56,10 @@
     "productName": "Tradehole",
     "copyright": "Copyright © 2026",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+    "icon": "build/icon.png",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -66,6 +72,7 @@
       }
     ],
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.finance",
       "target": [
         "dir"
@@ -75,6 +82,7 @@
       "gatekeeperAssess": false
     },
     "win": {
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "nsis",

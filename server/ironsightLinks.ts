@@ -298,3 +298,103 @@ export function resolveIronsightConflicts(
     `Unknown conflict "${raw}". Use all | iran-israel | russia-ukraine`,
   );
 }
+
+/** Panels scoped by `?conflict=` on IRONSIGHT. */
+const CONFLICT_PANELS = [
+  "news",
+  "telegram",
+  "strikes",
+  "ships",
+  "flights",
+  "fires",
+  "polymarket",
+  "regional-alerts",
+  "alerts",
+  "drones",
+] as const;
+
+/** Global panels (no conflict filter needed / still useful once). */
+const GLOBAL_PANELS = ["oil", "markets", "crypto", "conflicts"] as const;
+
+export type IronsightPanelDump = {
+  panel: string;
+  conflict: string | null;
+  ok: boolean;
+  error?: string;
+  byteLength: number;
+  data: unknown;
+};
+
+export type IronsightFullDump = {
+  generatedAt: string;
+  sourceBase: string;
+  conflicts: IronsightConflictKey[];
+  note: string;
+  panelCount: number;
+  okCount: number;
+  panels: IronsightPanelDump[];
+};
+
+async function fetchPanelDump(
+  panel: string,
+  url: string,
+  conflict: string | null,
+): Promise<IronsightPanelDump> {
+  try {
+    const data = await fetchJson(url, 30_000);
+    const json = JSON.stringify(data);
+    return {
+      panel,
+      conflict,
+      ok: true,
+      byteLength: Buffer.byteLength(json, "utf8"),
+      data,
+    };
+  } catch (err) {
+    return {
+      panel,
+      conflict,
+      ok: false,
+      error: String(err),
+      byteLength: 0,
+      data: null,
+    };
+  }
+}
+
+/**
+ * Full uncapped IRONSIGHT page dump — every panel API the companion exposes,
+ * for both theaters where conflict-scoped, plus global oil/markets/crypto/conflicts.
+ */
+export async function collectIronsightFullDump(
+  ironsightUrl: string,
+  conflicts: IronsightConflictKey[] = IRONSIGHT_CONFLICTS,
+): Promise<IronsightFullDump> {
+  const base = ironsightUrl.replace(/\/$/, "");
+  const jobs: Array<Promise<IronsightPanelDump>> = [];
+
+  for (const conflict of conflicts) {
+    const q = `conflict=${encodeURIComponent(conflict)}`;
+    for (const panel of CONFLICT_PANELS) {
+      // Telegram dump lives in telegram_channel_dump.json (OSINT pack). Keep panel sample here for speed.
+      jobs.push(
+        fetchPanelDump(panel, `${base}/api/${panel}?${q}`, conflict),
+      );
+    }
+  }
+  for (const panel of GLOBAL_PANELS) {
+    jobs.push(fetchPanelDump(panel, `${base}/api/${panel}`, null));
+  }
+
+  const panels = await Promise.all(jobs);
+  return {
+    generatedAt: new Date().toISOString(),
+    sourceBase: base,
+    conflicts,
+    note:
+      "Uncapped raw IRONSIGHT panel payloads (news/telegram-sample/ships/flights/strikes/fires/polymarket/regional/alerts/drones + oil/markets/crypto/conflicts). Prefer ZIP. For the live Telegram channel dump (last ~7d), use telegram_channel_dump.json from the OSINT/EVERYTHING pack.",
+    panelCount: panels.length,
+    okCount: panels.filter((p) => p.ok).length,
+    panels,
+  };
+}
