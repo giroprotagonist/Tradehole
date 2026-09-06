@@ -365,6 +365,15 @@ code {
   font-weight: 600;
 }
 
+.energy-source {
+  margin: 0.2rem 0 0;
+  letter-spacing: 0.02em;
+}
+
+.feed-meta {
+  margin: 0.25rem 0 0;
+}
+
 .table-wrap {
   overflow: auto;
   max-height: 340px;

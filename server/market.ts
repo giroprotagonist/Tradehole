@@ -1,4 +1,5 @@
 import YahooFinance from "yahoo-finance2";
+import { preferCmeThenYahoo } from "./cmeQuotes";
 
 const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
@@ -18,7 +19,7 @@ export type StockQuote = {
   currency: string | null;
   shortName: string | null;
   marketState: string | null;
-  source: "yahoo-finance2";
+  source: "yahoo-finance2" | string;
   fetchedAt: string;
 };
 
@@ -128,13 +129,17 @@ export async function getOptionsChain(
   };
 }
 
-/** CL=F WTI, BZ=F Brent */
+/**
+ * Prefer CME Group delayed web quotes for WTI (CL) — same JSON as
+ * cmegroup.com light-sweet-crude.quotes.html. ICE Brent (BZ=F) stays Yahoo.
+ * Yahoo is always the fallback if CME is blocked/down.
+ */
 export async function getEnergyQuotes(): Promise<{
   wti: StockQuote;
   brent: StockQuote;
 }> {
   const [wti, brent] = await Promise.all([
-    getStockQuote("CL=F"),
+    preferCmeThenYahoo("CL", "CL=F", () => getStockQuote("CL=F")),
     getStockQuote("BZ=F"),
   ]);
   return { wti, brent };
